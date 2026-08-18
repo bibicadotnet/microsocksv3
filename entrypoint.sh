@@ -1,5 +1,5 @@
 #!/bin/bash
-# MicroSocks v2 + WARP integration entrypoint
+# MicroSocks v3 + Cloudflare WARP (WireGuard) integration entrypoint
 set -eu
 
 # ==========================================
@@ -10,14 +10,14 @@ WG_DIR="$(dirname "$WG_CONF")"
 WG_IFACE="${WG_IFACE:-wg0}"
 WG_MTU="${MTU:-1280}"
 
-TUNNEL_PROTOCOL="${TUNNEL_PROTOCOL:-none}" # wireguard | masque | none (default)
+TUNNEL_PROTOCOL="${TUNNEL_PROTOCOL:-none}" # wireguard | none (default)
 
 LISTEN_ADDR="${BIND_ADDR:-0.0.0.0}"
 LISTEN_PORT="${PORT:-${BIND_PORT:-1080}}"
 SOCKS_USER="${USERNAME:-${SOCKS_USER:-}}"
 SOCKS_PASS="${PASSWORD:-${SOCKS_PASS:-}}"
 
-# Bandwidth settings (MicroSocks v2)
+# Bandwidth settings (MicroSocks v3)
 DOWNLOAD_RATE="${DOWNLOAD_RATE:-}"
 UPLOAD_RATE="${UPLOAD_RATE:-}"
 AUTH_ONCE="${AUTH_ONCE:-}"
@@ -37,26 +37,15 @@ CURL_TIMEOUT="${CURL_TIMEOUT:-15}"
 TRACE_TIMEOUT="${TRACE_TIMEOUT:-3}"
 TRACE_CONNECT_TIMEOUT="${TRACE_CONNECT_TIMEOUT:-2}"
 
-# MASQUE / usque defaults
-USQUE_CONFIG="${USQUE_CONFIG:-/etc/wireguard/masque-config.json}"
-MASQUE_PROXY_MODE="${MASQUE_PROXY_MODE:-l4-socks}"
-MASQUE_HTTP2="${MASQUE_HTTP2:-0}"
-MASQUE_SNI="${MASQUE_SNI:-}"
-MASQUE_MTU="${MASQUE_MTU:-}"
-WARP_JWT="${WARP_JWT:-}"
-WARP_LICENSE="${WARP_LICENSE:-}"
-USQUE_DEVICE_NAME="${USQUE_DEVICE_NAME:-MicroWARP}"
-GOMEMLIMIT="${GOMEMLIMIT:-512MiB}"
-
 # ==========================================
 # Logging helpers
 # ==========================================
-log()  { printf '%s\n' "==> [MicroSocksV2] $*"; }
-warn() { printf '%s\n' "==> [MicroSocksV2] ⚠️  $*" >&2; }
-die()  { printf '%s\n' "==> [MicroSocksV2] ❌ $*" >&2; exit 1; }
+log()  { printf '%s\n' "==> [MicroSocksV3] $*"; }
+warn() { printf '%s\n' "==> [MicroSocksV3] ⚠️  $*" >&2; }
+die()  { printf '%s\n' "==> [MicroSocksV3] ❌ $*" >&2; exit 1; }
 
 # ==========================================
-# Bandwidth Logic (MicroSocks v2)
+# Bandwidth Logic (MicroSocks v3)
 # ==========================================
 get_interface() {
     local interface
@@ -270,18 +259,8 @@ normalize_tunnel_protocol() {
     raw="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
     case "$raw" in
         wireguard|wg|wg0|kernel) printf 'wireguard' ;;
-        masque|usque|h3|http3|quic) printf 'masque' ;;
         none|direct|"") printf 'none' ;;
-        *) die "Unknown TUNNEL_PROTOCOL='$1' (supported: wireguard | masque | none)" ;;
-    esac
-}
-
-normalize_masque_proxy_mode() {
-    raw="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
-    case "$raw" in
-        l4|l4-socks|l4_socks|l4socks) printf 'l4-socks' ;;
-        socks|full|gvisor|l3) printf 'socks' ;;
-        *) die "Unknown MASQUE_PROXY_MODE='$1' (supported: l4-socks | socks)" ;;
+        *) die "Unknown TUNNEL_PROTOCOL='$1' (supported: wireguard | none)" ;;
     esac
 }
 
@@ -296,7 +275,7 @@ register_warp() {
     log "Using wgcf version: v${ver} (${arch})"
 
     url="$(build_wgcf_download_url "$ver" "$arch")"
-    workdir="$(mktemp -d /tmp/microsocksv2.XXXXXX)" || die "Could not create temp dir"
+    workdir="$(mktemp -d /tmp/microsocksv3.XXXXXX)" || die "Could not create temp dir"
     # shellcheck disable=SC2064
     trap 'rm -rf "$workdir"' EXIT INT TERM
 
@@ -522,73 +501,6 @@ show_egress_ip() {
 }
 
 # ==========================================
-# MASQUE Registration & Control
-# ==========================================
-register_masque() {
-    command_exists usque || die "usque binary not found in container"
-
-    conf_dir="$(dirname "$USQUE_CONFIG")"
-    mkdir -p "$conf_dir"
-
-    if [ -f "$USQUE_CONFIG" ] && [ -s "$USQUE_CONFIG" ]; then
-        log "Existing MASQUE configuration found: ${USQUE_CONFIG}"
-        return 0
-    fi
-
-    if [ -f "$USQUE_CONFIG" ] && [ ! -s "$USQUE_CONFIG" ]; then
-        rm -f "$USQUE_CONFIG"
-    fi
-
-    log "No MASQUE configuration, registering Cloudflare WARP device..."
-
-    set -- usque -c "$USQUE_CONFIG" register -a
-    if [ -n "$USQUE_DEVICE_NAME" ]; then
-        set -- "$@" -n "$USQUE_DEVICE_NAME"
-    fi
-    if [ -n "$WARP_JWT" ]; then
-        log "Using Zero Trust JWT for registration"
-        set -- "$@" --jwt "$WARP_JWT"
-    fi
-
-    reg_log="$(mktemp /tmp/usque-register.XXXXXX 2>/dev/null || echo /tmp/usque-register.log)"
-    if ! (
-        cd "$conf_dir" || exit 1
-        "$@" >"$reg_log" 2>&1
-    ); then
-        warn "usque register output:"
-        cat "$reg_log" 2>/dev/null || true
-        rm -f "$reg_log"
-        die "usque register failed"
-    fi
-    rm -f "$reg_log"
-
-    if [ ! -f "$USQUE_CONFIG" ] || [ ! -s "$USQUE_CONFIG" ]; then
-        if [ -f "$conf_dir/config.json" ] && [ -s "$conf_dir/config.json" ]; then
-            mv -f "$conf_dir/config.json" "$USQUE_CONFIG"
-        fi
-    fi
-
-    [ -f "$USQUE_CONFIG" ] && [ -s "$USQUE_CONFIG" ] || die "Failed to generate masque config"
-    log "MASQUE device registered successfully"
-}
-
-maybe_apply_warp_license() {
-    [ -n "$WARP_LICENSE" ] || return 0
-    command_exists usque || return 0
-
-    log "Applying WARP+ license..."
-    if usque -c "$USQUE_CONFIG" license "$WARP_LICENSE" >/dev/null 2>&1; then
-        log "WARP+ license applied (license subcmd)"
-        return 0
-    fi
-    if usque -c "$USQUE_CONFIG" account license "$WARP_LICENSE" >/dev/null 2>&1; then
-        log "WARP+ license applied (account license subcmd)"
-        return 0
-    fi
-    warn "Failed to apply WARP+ license, continuing..."
-}
-
-# ==========================================
 # Run Paths
 # ==========================================
 run_direct_path() {
@@ -641,54 +553,6 @@ run_wireguard_path() {
     exec "$@"
 }
 
-run_masque_path() {
-    log "Protocol: MASQUE (usque user-space)"
-    
-    register_masque
-    maybe_apply_warp_license
-
-    proxy_mode="$(normalize_masque_proxy_mode "$MASQUE_PROXY_MODE")"
-    
-    if [ -n "${GOMEMLIMIT:-}" ]; then
-        export GOMEMLIMIT
-    fi
-
-    set -- usque -c "$USQUE_CONFIG" "$proxy_mode" -b "$LISTEN_ADDR" -p "$LISTEN_PORT"
-
-    if [ -n "$SOCKS_USER" ] && [ -n "$SOCKS_PASS" ]; then
-        log "🔒 Authentication enabled (User: $SOCKS_USER)"
-        set -- "$@" -u "$SOCKS_USER" -w "$SOCKS_PASS"
-    else
-        warn "No authentication configured"
-    fi
-
-    if is_truthy "$MASQUE_HTTP2"; then
-        if [ "$proxy_mode" = "l4-socks" ]; then
-            warn "MASQUE_HTTP2=1 not supported in l4-socks, ignoring"
-        else
-            set -- "$@" --http2
-        fi
-    fi
-
-    if [ -n "$MASQUE_SNI" ] && [ "$proxy_mode" != "l4-socks" ]; then
-        set -- "$@" -s "$MASQUE_SNI"
-    fi
-
-    if [ -n "$MASQUE_MTU" ] && [ "$proxy_mode" != "l4-socks" ]; then
-        set -- "$@" -m "$MASQUE_MTU"
-    fi
-
-    if [ "$proxy_mode" = "socks" ] && ! is_truthy "$ENABLE_IPV6"; then
-        if usque socks --help 2>&1 | grep -q 'no-tunnel-ipv6'; then
-            set -- "$@" --no-tunnel-ipv6
-        fi
-    fi
-
-    log "🚀 usque ${proxy_mode} listening on ${LISTEN_ADDR}:${LISTEN_PORT}"
-    show_egress_ip &
-    exec "$@"
-}
-
 # ==========================================
 # Main entrypoint
 # ==========================================
@@ -696,7 +560,7 @@ main() {
     proto="$(normalize_tunnel_protocol "$TUNNEL_PROTOCOL")"
     log "TUNNEL_PROTOCOL=${proto}"
 
-    # Setup bandwidth rate limits if specified (works for direct / wg / masque)
+    # Setup bandwidth rate limits if specified
     if [ -n "$DOWNLOAD_RATE" ] || [ -n "$UPLOAD_RATE" ]; then
         log "Setting up bandwidth control: Download=${DOWNLOAD_RATE:-unlimited}, Upload=${UPLOAD_RATE:-unlimited}"
         setup_bandwidth
@@ -704,7 +568,6 @@ main() {
 
     case "$proto" in
         wireguard) run_wireguard_path ;;
-        masque)    run_masque_path ;;
         none)      run_direct_path ;;
     esac
 }
