@@ -449,17 +449,17 @@ bring_up_wg() {
 
 install_policy_routes() {
     if [ -n "${ORIG_IP_V4:-}" ] && [ -n "${ORIG_GW_V4:-}" ] && [ -n "${ORIG_DEV_V4:-}" ]; then
-        log "Injecting IPv4 policy route (from ${ORIG_IP_V4} via ${ORIG_GW_V4} dev ${ORIG_DEV_V4})"
+        log "Injecting IPv4 policy route (from ${ORIG_IP_V4} lookup main priority 5)"
         ip rule del from "$ORIG_IP_V4" table 128 2>/dev/null || true
-        ip rule add from "$ORIG_IP_V4" table 128 priority 100 2>/dev/null || warn "IPv4 ip rule failed"
-        ip route replace table 128 default via "$ORIG_GW_V4" dev "$ORIG_DEV_V4" 2>/dev/null || warn "IPv4 route replace failed"
+        ip rule del from "$ORIG_IP_V4" lookup main 2>/dev/null || true
+        ip rule add from "$ORIG_IP_V4" lookup main priority 5 2>/dev/null || warn "IPv4 ip rule failed"
     fi
 
     if is_truthy "$ENABLE_IPV6" && [ -n "${ORIG_IP_V6:-}" ] && [ -n "${ORIG_GW_V6:-}" ] && [ -n "${ORIG_DEV_V6:-}" ]; then
-        log "Injecting IPv6 policy route (from ${ORIG_IP_V6} via ${ORIG_GW_V6} dev ${ORIG_DEV_V6})"
+        log "Injecting IPv6 policy route (from ${ORIG_IP_V6} lookup main priority 5)"
         ip -6 rule del from "$ORIG_IP_V6" table 129 2>/dev/null || true
-        ip -6 rule add from "$ORIG_IP_V6" table 129 priority 100 2>/dev/null || warn "IPv6 ip rule failed"
-        ip -6 route replace table 129 default via "$ORIG_GW_V6" dev "$ORIG_DEV_V6" 2>/dev/null || warn "IPv6 route replace failed"
+        ip -6 rule del from "$ORIG_IP_V6" lookup main 2>/dev/null || true
+        ip -6 rule add from "$ORIG_IP_V6" lookup main priority 5 2>/dev/null || warn "IPv6 ip rule failed"
     fi
 
     if [ -n "${PRE_WARP_GW_V4:-}" ] && [ -n "${PRE_WARP_DEV_V4:-}" ]; then
