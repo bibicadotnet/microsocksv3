@@ -475,6 +475,15 @@ install_policy_routes() {
             log "Restored Tailscale v6 route via ${PRE_WARP_GW_V6} dev ${PRE_WARP_DEV_V6}"
         fi
     fi
+
+    # Debug: Print current routing rules and tables
+    log "--- DEBUG: ip rule show ---"
+    ip rule show || true
+    log "--- DEBUG: ip route show table 128 ---"
+    ip route show table 128 || true
+    log "--- DEBUG: ip route show table main ---"
+    ip route show default || true
+    log "---------------------------"
 }
 
 show_egress_ip() {
