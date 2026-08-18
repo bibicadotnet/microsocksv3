@@ -102,3 +102,8 @@ curl -x socks5h://taikhoan1:taikhoan1@IP_CUA_VPS:10001 https://ifconfig.me
 * Docker & Docker Compose
 * Kernel của Host VPS hỗ trợ WireGuard (các bản Linux kernel mới từ 5.6 trở lên đã được tích hợp sẵn).
 * Quyền `NET_ADMIN` và `SYS_MODULE` để cấu hình mạng nâng cao.
+
+## 🙏 Lời cảm ơn
+
+* [ViRb3/wgcf](https://github.com/ViRb3/wgcf) - WireGuard
+* [ccbkkb/MicroWARP](https://github.com/ccbkkb/MicroWARP) - MicroWARP
